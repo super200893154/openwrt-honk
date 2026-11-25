@@ -174,7 +174,7 @@ jobs:
           # own verified set.
           ci/build-doona.sh
           # 官方通道只用 stable lane；6.6 的 pin 与兼容补丁由实验通道自己维护。
-          CORE_LANE=stable ci/build-core.sh
+          CORE_LANE=stable CORE_ARCHS=x86_64 ci/build-core.sh
 
           tag="$HONK_SOURCE_TAG"
           gh release view "$tag" >/dev/null 2>&1 || \
@@ -182,8 +182,6 @@ jobs:
               --title "Source assets $tag" --prerelease --latest=false
           for file in \
             "artifacts/cache/honk-core-$CORE_COMMIT-x86_64.tar.gz" \
-            "artifacts/cache/honk-core-$CORE_COMMIT-aarch64.tar.gz" \
-            "artifacts/cache/honk-core-$CORE_COMMIT-armv7.tar.gz" \
             "artifacts/cache/$DOONA_ARCHIVE" \
             honk/generated-stage.mk \
             honk/generated-provenance.json \
@@ -195,7 +193,7 @@ jobs:
           # Write the tag and the real hashes into the package Makefiles; the
           # commit below therefore describes exactly what a feed build downloads.
           sed -i "s|^HONK_SOURCE_TAG?=.*|HONK_SOURCE_TAG?=$tag|" honk/Makefile luci-app-honk/Makefile
-          for arch in X86_64 AARCH64 ARMV7; do
+          for arch in X86_64; do
             hash=$(sed -n "s/^HONK_HASH_${arch}:=//p" honk/generated-stage.mk)
             [ "${#hash}" -eq 64 ] || { echo "::error::missing HONK_HASH_${arch}"; exit 1; }
             sed -i "s|^HONK_HASH_${arch}?=.*|HONK_HASH_${arch}?=$hash|" honk/Makefile
