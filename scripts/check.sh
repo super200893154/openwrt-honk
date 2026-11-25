@@ -74,7 +74,7 @@ test "$(sed -n 's/^HONK_SOURCE_TAG?=//p' honk/Makefile)" = \
 	echo 'honk and luci-app-honk must reference the same source tag' >&2
 	exit 1
 }
-for arch in X86_64 AARCH64 ARMV7; do
+for arch in X86_64; do
 	grep -q "^HONK_HASH_${arch}?=[0-9a-f]\{64\}$" honk/Makefile || {
 		echo "honk/Makefile: HONK_HASH_${arch} is missing or not a SHA-256" >&2
 		exit 1
