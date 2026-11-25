@@ -64,7 +64,7 @@ fi
 
 base="https://github.com/kenzok8/openwrt-honk/releases/download/$tag"
 declare -a names hashes
-for arch in x86_64 aarch64 armv7; do
+for arch in x86_64; do
 	var="HONK_HASH_$(printf '%s' "$arch" | tr 'a-z' 'A-Z')"
 	names+=("honk-core-$core_commit-$arch.tar.gz")
 	hashes+=("$(value honk/Makefile "$var")")
