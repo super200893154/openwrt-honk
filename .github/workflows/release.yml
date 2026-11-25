@@ -79,12 +79,6 @@ jobs:
       fail-fast: false
       matrix:
         arch:
-          - aarch64_cortex-a53
-          - aarch64_cortex-a72
-          - aarch64_cortex-a76
-          - aarch64_generic
-          - arm_cortex-a7_neon-vfpv4
-          - arm_cortex-a9
           - x86_64
         # 只发 SDK 25.12：honk 要求内核 6.12+。
         sdk:
@@ -329,10 +323,10 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           count=$(find all-artifacts -mindepth 1 -maxdepth 1 -type d -name 'packages-sdk*' | wc -l)
-          test "$count" -eq 7 || { echo "::error::expected 7 SDK artifacts, got $count"; exit 1; }
+          test "$count" -eq 1 || { echo "::error::expected 1 SDK artifact, got $count"; exit 1; }
           find all-artifacts -path "*/release/*" -type f -exec cp -v {} dist/ \;
-          # 7 archs x 2 packages, all APK (SDK 25.12 only).
-          test "$(find dist -maxdepth 1 -type f -name '*.apk' | wc -l)" -ge 14
+          # x86_64 only: 1 arch x 2 packages, all APK (SDK 25.12 only).
+          test "$(find dist -maxdepth 1 -type f -name '*.apk' | wc -l)" -ge 2
           (cd dist && sha256sum ./*.apk > SHA256SUMS)
 
       - name: Record candidate and package manifest
@@ -426,7 +420,7 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           BASE="https://github.com/${REPO}/releases/download/${TAG}"
-          ARCHS="aarch64_cortex-a53 aarch64_cortex-a72 aarch64_cortex-a76 aarch64_generic arm_cortex-a7_neon-vfpv4 arm_cortex-a9 x86_64"
+          ARCHS="x86_64"
           PREVIOUS_TAG="$(git tag --sort=-creatordate | grep '^v' | grep -v "^${TAG}$" | head -1 || true)"
 
           if [ -n "$PREVIOUS_TAG" ]; then
@@ -652,119 +646,3 @@ jobs:
           cmp dist/release-manifest.json published/release-manifest.json
           cmp dist/SHA256SUMS published/SHA256SUMS
           (cd published && sha256sum -c SHA256SUMS.expected)
-
-  upload_feed:
-    name: Upload Feed to R2
-    needs: [build, release]
-    runs-on: ubuntu-latest
-    if: ${{ success() && (github.event_name == 'push' || inputs.auto_publish || (!inputs.candidate && !inputs.prerelease)) }}
-    permissions:
-      actions: write
-      contents: read
-
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v8
-        with:
-          path: artifacts
-          pattern: packages-*
-
-      - name: Organize feed structure
-        run: |
-          set -euo pipefail
-          mkdir -p feed
-          for dir in artifacts/packages-sdk*; do
-            [ -d "$dir/feed" ] || continue
-            name=$(basename "$dir")
-            sdk=$(echo "$name" | sed 's/packages-sdk\([^-]*\)-.*/\1/')
-            arch=$(echo "$name" | sed 's/packages-sdk[^-]*-//')
-            # Feed layout matches the dllkids unified feed: <sdk>/<arch>/.
-            target="feed/${sdk}/${arch}"
-            mkdir -p "$target"
-            cp -v "$dir/feed/"* "$target/" 2>/dev/null || true
-
-            manifest=""
-            for pkg in honk luci-app-honk; do
-              if ls "$target"/${pkg}_*.ipk >/dev/null 2>&1; then
-                f=$(basename "$(ls "$target"/${pkg}_*.ipk | sort -V | tail -1)")
-              elif ls "$target"/${pkg}-*.apk >/dev/null 2>&1; then
-                f=$(basename "$(ls "$target"/${pkg}-*.apk | sort -V | tail -1)")
-              else
-                f=""
-              fi
-              if [ -n "$f" ]; then
-                sha=$(sha256sum "$target/$f" | awk '{print $1}')
-                manifest="${manifest}${pkg}=${f}"$'\n'"${pkg}_sha256=${sha}"$'\n'
-              fi
-            done
-            [ -n "$manifest" ] && printf '%s' "$manifest" > "$target/manifest-honk.txt"
-          done
-          find feed -type f | sort
-
-      # Install rclone in its own step that holds NO secrets, so a tampered
-      # download can never read the R2 keys. Pinned version + checksum verify.
-      - name: Install rclone (pinned)
-        env:
-          RCLONE_VER: "1.69.1"
-        run: |
-          set -eu
-          zip="rclone-v${RCLONE_VER}-linux-amd64.zip"
-          base="https://downloads.rclone.org/v${RCLONE_VER}"
-          curl -fsSL -o "$zip" "${base}/${zip}"
-          curl -fsSL -o SHA256SUMS "${base}/SHA256SUMS"
-          grep " ${zip}$" SHA256SUMS | sha256sum -c -
-          unzip -q "$zip"
-          sudo install -m 0755 "rclone-v${RCLONE_VER}-linux-amd64/rclone" /usr/local/bin/rclone
-          rclone version
-
-      - name: Upload to Cloudflare R2
-        env:
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
-        run: |
-          set -euo pipefail
-          [ -n "$R2_ACCESS_KEY_ID" ] && [ -n "$R2_SECRET_ACCESS_KEY" ] && \
-            [ -n "$R2_ENDPOINT" ] && [ -n "$R2_BUCKET" ] || {
-              echo "::error::R2 credentials are required for a formal release"
-              exit 1
-            }
-          mkdir -p ~/.config/rclone
-          cat > ~/.config/rclone/rclone.conf <<EOF
-          [r2]
-          type = s3
-          provider = Cloudflare
-          access_key_id = ${R2_ACCESS_KEY_ID}
-          secret_access_key = ${R2_SECRET_ACCESS_KEY}
-          endpoint = ${R2_ENDPOINT}
-          acl = private
-          no_check_bucket = true
-          EOF
-          find feed -type f | grep -q . || { echo "::error::feed is empty"; exit 1; }
-          destination="r2:${R2_BUCKET}/openwrt-feed/honk/"
-          # Upload packages first. Publish package indexes last, so a failed
-          # transfer cannot advertise a package that is not on R2 yet.
-          rclone copy feed/ "$destination" --checksum --fast-list \
-            --exclude 'APKINDEX*' --exclude 'Packages*' \
-            --exclude 'packages.adb*' --exclude 'manifest-honk.txt' \
-            --transfers 8 --checkers 16
-          rclone copy feed/ "$destination" --checksum --fast-list \
-            --filter '+ APKINDEX*' --filter '+ Packages*' \
-            --filter '+ packages.adb*' --filter '- **' \
-            --transfers 8 --checkers 16
-          rclone copy feed/ "$destination" --checksum --fast-list \
-            --filter '+ manifest-honk.txt' --filter '- **' \
-            --transfers 8 --checkers 16
-          rclone check feed/ "$destination" --one-way --checksum --fast-list
-
-      - name: Trigger unified feed aggregation
-        env:
-          AGGREGATE_FEED_TOKEN: ${{ secrets.AGGREGATE_FEED_TOKEN }}
-        run: |
-          [ -z "$AGGREGATE_FEED_TOKEN" ] && { echo "No aggregate token, skip trigger"; exit 0; }
-          curl -fsSL -X POST \
-            -H "Authorization: Bearer ${AGGREGATE_FEED_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/kenzok8/openwrt-clashoo/actions/workflows/aggregate-feed.yml/dispatches \
-            -d '{"ref":"main","inputs":{"trigger_project":"honk"}}' || echo "Aggregate trigger failed; scheduled workflow will retry."
