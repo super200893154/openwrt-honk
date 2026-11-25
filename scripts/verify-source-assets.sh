@@ -62,7 +62,7 @@ if [ -z "$tag_override" ] && [ "$core_tag" != "$doona_tag" ]; then
 	exit 1
 fi
 
-base="https://github.com/kenzok8/openwrt-honk/releases/download/$tag"
+base="https://github.com/${GITHUB_REPOSITORY:-super200893154/openwrt-honk}/releases/download/$tag"
 declare -a names hashes
 for arch in x86_64; do
 	var="HONK_HASH_$(printf '%s' "$arch" | tr 'a-z' 'A-Z')"
@@ -79,7 +79,7 @@ failed=0
 # GitHub 的匿名 release 下载会随时返 504，带 token 走 API 才稳定。
 fetch_asset() { # <name>
 	if command -v gh >/dev/null 2>&1 \
-		&& gh release download "$tag" --repo "${GITHUB_REPOSITORY:-kenzok8/openwrt-honk}" \
+		&& gh release download "$tag" --repo "${GITHUB_REPOSITORY:-super200893154/openwrt-honk}" \
 			--pattern "$1" --dir "$workdir" --clobber >/dev/null 2>&1; then
 		return 0
 	fi
