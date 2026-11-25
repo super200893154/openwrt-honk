@@ -245,7 +245,7 @@ grep -Fq '          - "25.12"' .github/workflows/release.yml
 	echo 'release.yml must not build SDK 24.10 packages: honk needs kernel 6.12+' >&2
 	exit 1
 }
-grep -Fq 'aarch64_cortex-a76' .github/workflows/release.yml
+grep -Fq -- '- x86_64' .github/workflows/release.yml
 grep -Fq 'kernel_ok' scripts/install.sh
 grep -Fq "! rg -n 'MockBackend|mockBackend|mock-backend' dist" ci/build-doona.sh
 ! grep -Fq "! rg -n 'mock backend|MockBackend|mockBackend' dist" ci/build-doona.sh
