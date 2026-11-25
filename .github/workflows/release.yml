@@ -648,3 +648,50 @@ jobs:
           cmp dist/release-manifest.json published/release-manifest.json
           cmp dist/SHA256SUMS published/SHA256SUMS
           (cd published && sha256sum -c SHA256SUMS.expected)
+
+  publish_feed:
+    name: Publish APK feed to GitHub Pages
+    needs: [build, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          pattern: packages-*
+
+      - name: Assemble feed tree
+        run: |
+          set -euo pipefail
+          mkdir -p site
+          shopt -s nullglob
+          dirs=(artifacts/packages-sdk*)
+          if [ ${#dirs[@]} -gt 0 ] && [ -d "${dirs[0]}/feed" ]; then
+            for dir in "${dirs[@]}"; do
+              [ -d "$dir/feed" ] || continue
+              name=$(basename "$dir")
+              sdk=$(printf '%s' "$name" | sed 's/packages-sdk\([^-]*\)-.*/\1/')
+              arch=$(printf '%s' "$name" | sed 's/packages-sdk[^-]*-//')
+              mkdir -p "site/$sdk/$arch"
+              cp -v "$dir/feed/"* "site/$sdk/$arch/" 2>/dev/null || true
+            done
+          else
+            mkdir -p site/25.12/x86_64
+            cp -v artifacts/feed/* site/25.12/x86_64/ 2>/dev/null || true
+          fi
+          test -f site/25.12/x86_64/packages.adb || { echo '::error::feed index missing'; find site -type f | head -20; exit 1; }
+          find site -type f | sort
+
+      - name: Push feed to gh-pages
+        run: |
+          set -euo pipefail
+          cd site
+          git init -q
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git checkout -q -b gh-pages
+          git add -A
+          git commit -q -m "feed: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" gh-pages
